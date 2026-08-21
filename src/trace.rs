@@ -291,17 +291,6 @@ impl TraceContextPropagator {
             .map_err(TraceContextError::Context)
     }
 
-    /// Extracts and verifies the registered Trace Context, regardless of its audience.
-    pub fn extract(
-        &self,
-        context: &InvocationContext,
-    ) -> Result<Option<TraceContext>, TraceContextError> {
-        let Some(extension) = context.sealed_extension(TRACE_CONTEXT_EXTENSION_KEY) else {
-            return Ok(None);
-        };
-        self.verify_extension(extension)
-    }
-
     /// Extracts the context only when the sealed audience covers one target.
     pub fn extract_for_target(
         &self,

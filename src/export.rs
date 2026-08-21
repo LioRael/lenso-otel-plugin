@@ -61,38 +61,110 @@ pub enum TelemetryError {
 /// Non-blocking handle for explicit application signals supplied by the host.
 #[derive(Clone, Debug)]
 pub struct TelemetryHandle {
-    pub(crate) queue: Rc<TelemetryQueue>,
+    route: Rc<TelemetryRoute>,
 }
 
 impl TelemetryHandle {
-    pub(crate) fn new(capacity: usize) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            queue: Rc::new(TelemetryQueue::new(capacity)),
+            route: Rc::new(TelemetryRoute::default()),
         }
     }
 
     /// Attempts to enqueue a signal without awaiting exporter or queue progress.
     pub fn try_emit(&self, signal: OtelSignal) -> Result<TelemetryAdmission, TelemetryError> {
         validate_signal(&signal)?;
+        Ok(self.route.enqueue(signal))
+    }
+
+    /// Returns drops recorded by the currently active generation, or zero while inactive.
+    pub fn dropped_count(&self) -> u64 {
+        self.route
+            .active
+            .borrow()
+            .as_ref()
+            .map_or(0, |queue| queue.dropped.get())
+    }
+
+    /// Returns pending signals for the currently active generation, or zero while inactive.
+    pub fn pending_count(&self) -> usize {
+        self.route
+            .active
+            .borrow()
+            .as_ref()
+            .map_or(0, |queue| queue.state.borrow().pending.len())
+    }
+
+    /// Returns the active generation's queue capacity, or zero while inactive.
+    pub fn capacity(&self) -> usize {
+        self.route
+            .active
+            .borrow()
+            .as_ref()
+            .map_or(0, |queue| queue.capacity)
+    }
+
+    pub(crate) fn activate(&self, generation: &GenerationTelemetry) {
+        self.route.activate(generation.queue.clone());
+    }
+
+    pub(crate) fn deactivate(&self, generation: &GenerationTelemetry) {
+        self.route.deactivate(&generation.queue);
+    }
+}
+
+#[derive(Debug, Default)]
+struct TelemetryRoute {
+    active: RefCell<Option<Rc<TelemetryQueue>>>,
+}
+
+impl TelemetryRoute {
+    fn enqueue(&self, signal: OtelSignal) -> TelemetryAdmission {
+        self.active
+            .borrow()
+            .as_ref()
+            .map_or(TelemetryAdmission::Closed, |queue| queue.enqueue(signal))
+    }
+
+    fn activate(&self, queue: Rc<TelemetryQueue>) {
+        if let Some(previous) = self.active.replace(Some(queue)) {
+            previous.close();
+        }
+    }
+
+    fn deactivate(&self, queue: &Rc<TelemetryQueue>) {
+        let mut active = self.active.borrow_mut();
+        if active
+            .as_ref()
+            .is_some_and(|current| Rc::ptr_eq(current, queue))
+        {
+            active.take();
+        }
+        queue.close();
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct GenerationTelemetry {
+    queue: Rc<TelemetryQueue>,
+}
+
+impl GenerationTelemetry {
+    pub(crate) fn new(capacity: usize) -> Self {
+        Self {
+            queue: Rc::new(TelemetryQueue::new(capacity)),
+        }
+    }
+
+    pub(crate) fn try_emit(
+        &self,
+        signal: OtelSignal,
+    ) -> Result<TelemetryAdmission, TelemetryError> {
+        validate_signal(&signal)?;
         Ok(self.queue.enqueue(signal))
     }
 
-    /// Returns the number of application signals dropped by this bounded queue.
-    pub fn dropped_count(&self) -> u64 {
-        self.queue.dropped.get()
-    }
-
-    /// Returns the number of signals waiting for the asynchronous exporter.
-    pub fn pending_count(&self) -> usize {
-        self.queue.state.borrow().pending.len()
-    }
-
-    /// Returns the queue capacity selected by the Module configuration.
-    pub fn capacity(&self) -> usize {
-        self.queue.capacity
-    }
-
-    pub(crate) fn receive(&self) -> LocalBoxFuture<'static, Option<OtelSignal>> {
+    fn receive(&self) -> LocalBoxFuture<'static, Option<OtelSignal>> {
         TelemetryQueue::receive(self.queue.clone())
     }
 }
@@ -159,7 +231,6 @@ impl TelemetryQueue {
         }))
     }
 
-    #[cfg(test)]
     fn close(&self) {
         if self.closed.replace(true) {
             return;
@@ -256,7 +327,7 @@ pub(crate) async fn export_diagnostics(
 }
 
 pub(crate) async fn export_application_signals(
-    telemetry: TelemetryHandle,
+    telemetry: GenerationTelemetry,
     exporter: Rc<dyn OtelExporter>,
     stats: OtelExportStats,
     cancellation: CancellationToken,
@@ -333,13 +404,15 @@ pub(crate) fn validate_signal(signal: &OtelSignal) -> Result<(), TelemetryError>
 
 #[cfg(test)]
 mod tests {
-    use super::{TelemetryHandle, TelemetryQueue};
+    use super::{GenerationTelemetry, TelemetryHandle, TelemetryQueue};
     use crate::{OtelLog, OtelSeverity, OtelSignal};
     use std::{collections::BTreeMap, time::Duration};
 
     #[test]
     fn queue_is_bounded_and_non_blocking() {
-        let handle = TelemetryHandle::new(1);
+        let handle = TelemetryHandle::new();
+        let generation = GenerationTelemetry::new(1);
+        handle.activate(&generation);
         let signal = OtelSignal::Log(OtelLog {
             timestamp: Duration::ZERO,
             severity: OtelSeverity::Info,
@@ -355,7 +428,7 @@ mod tests {
             Ok(super::TelemetryAdmission::Dropped)
         );
         assert_eq!(handle.dropped_count(), 1);
-        handle.queue.close();
+        handle.deactivate(&generation);
         assert_eq!(
             handle.try_emit(OtelSignal::Log(OtelLog {
                 timestamp: Duration::ZERO,
@@ -365,6 +438,44 @@ mod tests {
             })),
             Ok(super::TelemetryAdmission::Closed)
         );
-        drop(TelemetryQueue::receive(handle.queue));
+        drop(TelemetryQueue::receive(generation.queue));
+    }
+
+    #[test]
+    fn stable_route_replaces_and_closes_generations_safely() {
+        let handle = TelemetryHandle::new();
+        let first = GenerationTelemetry::new(2);
+        let second = GenerationTelemetry::new(2);
+        let signal = OtelSignal::Log(OtelLog {
+            timestamp: Duration::ZERO,
+            severity: OtelSeverity::Info,
+            body: "generation".to_owned(),
+            attributes: BTreeMap::new(),
+        });
+
+        assert_eq!(
+            handle.try_emit(signal.clone()),
+            Ok(super::TelemetryAdmission::Closed)
+        );
+        handle.activate(&first);
+        assert_eq!(
+            handle.try_emit(signal.clone()),
+            Ok(super::TelemetryAdmission::Accepted)
+        );
+        handle.activate(&second);
+        assert_eq!(
+            first.try_emit(signal.clone()),
+            Ok(super::TelemetryAdmission::Closed)
+        );
+        handle.deactivate(&first);
+        assert_eq!(
+            handle.try_emit(signal.clone()),
+            Ok(super::TelemetryAdmission::Accepted)
+        );
+        handle.deactivate(&second);
+        assert_eq!(
+            handle.try_emit(signal),
+            Ok(super::TelemetryAdmission::Closed)
+        );
     }
 }

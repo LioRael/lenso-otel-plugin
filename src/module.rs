@@ -1,18 +1,18 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use futures::future::LocalBoxFuture;
 use lenso_kernel::{
-    ActivateContext, DiagnosticFilter, DiagnosticObserver, InvocationContext, ModuleDependencies,
-    ModuleFuture, ModuleLifecycle, NativeRequestEndpoint, NativeRequestHandle, RequestCapability,
-    RuntimeDiagnostics, RuntimeFailure,
+    ActivateContext, DeactivateContext, DiagnosticFilter, DiagnosticObserver, InvocationContext,
+    ModuleDependencies, ModuleFuture, ModuleLifecycle, NativeRequestEndpoint, NativeRequestHandle,
+    RequestCapability, RuntimeDiagnostics, RuntimeFailure,
 };
 use lenso_native_adapter::{NativeModuleFactory, NativeModuleFactoryContext, NativeModuleInstance};
 
 use crate::{
     OtelSignal,
     export::{
-        OtelExportStats, OtelExporter, TelemetryAdmission, TelemetryError, TelemetryHandle,
-        export_application_signals, export_diagnostics, validate_signal,
+        GenerationTelemetry, OtelExportStats, OtelExporter, TelemetryAdmission, TelemetryError,
+        TelemetryHandle, export_application_signals, export_diagnostics, validate_signal,
     },
 };
 
@@ -160,7 +160,7 @@ pub struct OtelModuleFactory {
     diagnostics: RuntimeDiagnostics,
     exporter: Rc<dyn OtelExporter>,
     config: OtelModuleConfig,
-    telemetry: TelemetryHandle,
+    telemetry_routes: RefCell<BTreeMap<String, TelemetryHandle>>,
     stats: OtelExportStats,
     expose_telemetry_capability: bool,
 }
@@ -172,7 +172,7 @@ impl OtelModuleFactory {
         Self {
             diagnostics,
             exporter: Rc::new(exporter),
-            telemetry: TelemetryHandle::new(config.telemetry_queue_capacity()),
+            telemetry_routes: RefCell::new(BTreeMap::new()),
             stats: OtelExportStats::new(),
             config,
             expose_telemetry_capability: false,
@@ -182,7 +182,6 @@ impl OtelModuleFactory {
     /// Applies Module-owned queue and source policy before the factory is linked.
     #[must_use]
     pub fn with_config(mut self, config: OtelModuleConfig) -> Self {
-        self.telemetry = TelemetryHandle::new(config.telemetry_queue_capacity());
         self.config = config;
         self
     }
@@ -194,12 +193,17 @@ impl OtelModuleFactory {
         self
     }
 
-    /// Returns the host-injected explicit telemetry handle.
-    pub fn telemetry(&self) -> TelemetryHandle {
-        self.telemetry.clone()
+    /// Returns the stable host telemetry route for one App-local Module Instance.
+    pub fn telemetry_for(&self, instance_key: impl Into<String>) -> TelemetryHandle {
+        let instance_key = instance_key.into();
+        self.telemetry_routes
+            .borrow_mut()
+            .entry(instance_key)
+            .or_insert_with(TelemetryHandle::new)
+            .clone()
     }
 
-    /// Returns exporter outcomes for this Module factory.
+    /// Returns host-observed exporter outcomes aggregated across this factory's generations.
     pub fn stats(&self) -> OtelExportStats {
         self.stats.clone()
     }
@@ -212,7 +216,7 @@ impl NativeModuleFactory for OtelModuleFactory {
 
     fn instantiate(
         &self,
-        _context: NativeModuleFactoryContext<'_>,
+        context: NativeModuleFactoryContext<'_>,
     ) -> Result<NativeModuleInstance, RuntimeFailure> {
         let observer = self
             .diagnostics
@@ -223,16 +227,17 @@ impl NativeModuleFactory for OtelModuleFactory {
             .map_err(|error| RuntimeFailure::InvalidResolvedPlan {
                 detail: format!("OTel diagnostics observer could not be created: {error:?}"),
             })?;
+        let telemetry = GenerationTelemetry::new(self.config.telemetry_queue_capacity());
+        let host_telemetry = self.telemetry_for(context.instance_key());
         let lifecycle = OtelModuleLifecycle {
             observer: RefCell::new(Some(observer)),
-            telemetry: self.telemetry.clone(),
+            telemetry: telemetry.clone(),
+            host_telemetry,
             exporter: self.exporter.clone(),
             stats: self.stats.clone(),
         };
         let endpoints = if self.expose_telemetry_capability {
-            vec![Rc::new(OtelTelemetryEndpoint {
-                telemetry: self.telemetry.clone(),
-            }) as Rc<dyn NativeRequestEndpoint>]
+            vec![Rc::new(OtelTelemetryEndpoint { telemetry }) as Rc<dyn NativeRequestEndpoint>]
         } else {
             Vec::new()
         };
@@ -243,7 +248,8 @@ impl NativeModuleFactory for OtelModuleFactory {
 #[derive(Debug)]
 struct OtelModuleLifecycle {
     observer: RefCell<Option<DiagnosticObserver>>,
-    telemetry: TelemetryHandle,
+    telemetry: GenerationTelemetry,
+    host_telemetry: TelemetryHandle,
     exporter: Rc<dyn OtelExporter>,
     stats: OtelExportStats,
 }
@@ -252,6 +258,7 @@ impl ModuleLifecycle for OtelModuleLifecycle {
     fn activate(&self, context: ActivateContext) -> ModuleFuture {
         let observer = self.observer.borrow_mut().take();
         let telemetry = self.telemetry.clone();
+        let host_telemetry = self.host_telemetry.clone();
         let exporter = self.exporter.clone();
         let stats = self.stats.clone();
         Box::pin(async move {
@@ -279,11 +286,12 @@ impl ModuleLifecycle for OtelModuleLifecycle {
             let telemetry_exporter = exporter;
             let telemetry_stats = stats;
             let telemetry_cancellation = context.cancellation();
+            let telemetry_worker = telemetry.clone();
             context
                 .tasks()
                 .spawn_local(Box::pin(async move {
                     export_application_signals(
-                        telemetry,
+                        telemetry_worker,
                         telemetry_exporter,
                         telemetry_stats,
                         telemetry_cancellation,
@@ -293,14 +301,20 @@ impl ModuleLifecycle for OtelModuleLifecycle {
                 .map_err(|error| RuntimeFailure::Internal {
                     detail: format!("failed to schedule OTel application export: {error:?}"),
                 })?;
+            host_telemetry.activate(&telemetry);
             Ok(())
         })
+    }
+
+    fn deactivate(&self, _context: DeactivateContext) -> ModuleFuture {
+        self.host_telemetry.deactivate(&self.telemetry);
+        Box::pin(futures::future::ready(Ok(())))
     }
 }
 
 #[derive(Debug)]
 struct OtelTelemetryEndpoint {
-    telemetry: TelemetryHandle,
+    telemetry: GenerationTelemetry,
 }
 
 impl NativeRequestEndpoint for OtelTelemetryEndpoint {

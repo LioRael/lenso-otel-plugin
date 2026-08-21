@@ -15,6 +15,8 @@ sha2.workspace = true
 
 [dev-dependencies]
 lenso-app-plan = { path = "../lenso-app-plan" }
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
