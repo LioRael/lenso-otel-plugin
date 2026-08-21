@@ -1,0 +1,15 @@
+{
+  "issuer": "lenso.otel",
+  "signing_key_utf8": "trace-key",
+  "audiences": ["example.trace@1:invoke"],
+  "capability_id": "example.trace@1",
+  "operation": "invoke",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "tracestate": "vendor=value",
+  "proof": "I8QWgWmsO-x3nTq8aoVH4QtKxjZmHyEYthHU9M_1w-A",
+  "invalid_traceparents": [
+    "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",
+    "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+  ]
+}
