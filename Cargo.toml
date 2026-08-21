@@ -1,0 +1,20 @@
+[package]
+name = "lenso-otel-module"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+futures.workspace = true
+hmac.workspace = true
+lenso-kernel = { path = "../lenso-kernel" }
+lenso-native-adapter = { path = "../lenso-native-adapter" }
+sha2.workspace = true
+
+[dev-dependencies]
+lenso-app-plan = { path = "../lenso-app-plan" }
+
+[lints]
+workspace = true
