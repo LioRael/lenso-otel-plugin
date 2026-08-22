@@ -1,6 +1,6 @@
 [package]
 name = "lenso-otel-module"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 license.workspace = true
 publish = true
@@ -11,8 +11,8 @@ description = "OpenTelemetry Module for Lenso vNext applications."
 base64.workspace = true
 futures.workspace = true
 hmac.workspace = true
-lenso-kernel = { path = "../lenso-kernel", version = "0.1.0" }
-lenso-native-adapter = { path = "../lenso-native-adapter", version = "0.1.0" }
+lenso-kernel = { path = "../lenso-kernel", version = "0.1.1" }
+lenso-native-adapter = { path = "../lenso-native-adapter", version = "0.1.1" }
 sha2.workspace = true
 
 [dev-dependencies]
