@@ -9,15 +9,20 @@ permissions: {}
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # 1.94.0
+        with:
+          toolchain: 1.94.0
+          components: rustfmt,clippy
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
       - run: cargo fmt --all -- --check
       - run: cargo check --locked --workspace --all-targets
       - run: cargo test --locked --workspace
-      - uses: oven-sh/setup-bun@v2
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo package --locked -p lenso-otel-module
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.2.21
       - run: bun test fixtures/otel/trace-context-conformance.test.ts
