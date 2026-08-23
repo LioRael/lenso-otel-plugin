@@ -16,3 +16,9 @@ cargo check --locked --workspace --all-targets
 cargo test --locked --workspace
 bun test fixtures/otel/trace-context-conformance.test.ts
 ```
+
+## Release
+
+Publication uses `release-plz` and crates.io Trusted Publishing from
+`.github/workflows/release-plz.yml`. A release PR is the version boundary; the
+release job receives only GitHub OIDC authority and never a registry token.
