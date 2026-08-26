@@ -12,12 +12,12 @@ description = "OpenTelemetry Module for Lenso vNext applications."
 base64.workspace = true
 futures.workspace = true
 hmac.workspace = true
-lenso-kernel = "0.1.1"
-lenso-native-adapter = "0.1.1"
+lenso-kernel = "0.1.12"
+lenso-native-adapter = "0.2.3"
 sha2.workspace = true
 
 [dev-dependencies]
-lenso-app-plan = "0.1.0"
+lenso-app-plan = "0.2.0"
 serde.workspace = true
 serde_json.workspace = true
 
