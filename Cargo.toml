@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/lenso-otel-module"]
+members = ["crates/lenso-otel-plugin"]
 
 [workspace.package]
 edition = "2024"
 license = "MIT"
 publish = true
-repository = "https://github.com/LioRael/lenso-otel-module"
+repository = "https://github.com/LioRael/lenso-otel-plugin"
 rust-version = "1.94"
 
 [workspace.dependencies]

@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, time::Duration};
 
 use lenso_kernel::{
     DiagnosticAdmission, DiagnosticEvent, DiagnosticOutcome, DiagnosticRecord,
-    DiagnosticShutdownOutcome, DiagnosticSource, ModuleLifecyclePhase, RuntimeFailureKind,
+    DiagnosticShutdownOutcome, DiagnosticSource, PluginLifecyclePhase, RuntimeFailureKind,
 };
 
 use crate::TraceContext;
@@ -115,8 +115,8 @@ pub fn diagnostic_to_signal(record: &DiagnosticRecord) -> OtelSignal {
     };
 
     match &record.event {
-        DiagnosticEvent::AppStarted { module_count } => {
-            attribute(&mut attributes, "lenso.app.module_count", *module_count);
+        DiagnosticEvent::AppStarted { plugin_count } => {
+            attribute(&mut attributes, "lenso.app.plugin_count", *plugin_count);
         }
         DiagnosticEvent::AppReady
         | DiagnosticEvent::ShutdownAdmissionClosed
@@ -126,11 +126,11 @@ pub fn diagnostic_to_signal(record: &DiagnosticRecord) -> OtelSignal {
             generation,
             phase,
         } => {
-            attribute(&mut attributes, "lenso.module.instance", instance);
-            attribute(&mut attributes, "lenso.module.generation", *generation);
+            attribute(&mut attributes, "lenso.plugin.instance", instance);
+            attribute(&mut attributes, "lenso.plugin.generation", *generation);
             attribute(
                 &mut attributes,
-                "lenso.module.phase",
+                "lenso.plugin.phase",
                 lifecycle_phase_name(*phase),
             );
         }
@@ -141,11 +141,11 @@ pub fn diagnostic_to_signal(record: &DiagnosticRecord) -> OtelSignal {
             outcome,
             elapsed,
         } => {
-            attribute(&mut attributes, "lenso.module.instance", instance);
-            attribute(&mut attributes, "lenso.module.generation", *generation);
+            attribute(&mut attributes, "lenso.plugin.instance", instance);
+            attribute(&mut attributes, "lenso.plugin.generation", *generation);
             attribute(
                 &mut attributes,
-                "lenso.module.phase",
+                "lenso.plugin.phase",
                 lifecycle_phase_name(*phase),
             );
             attribute(
@@ -260,15 +260,15 @@ pub fn diagnostic_to_signal(record: &DiagnosticRecord) -> OtelSignal {
             instance,
             generation,
         } => {
-            attribute(&mut attributes, "lenso.module.instance", instance);
-            attribute(&mut attributes, "lenso.module.generation", *generation);
+            attribute(&mut attributes, "lenso.plugin.instance", instance);
+            attribute(&mut attributes, "lenso.plugin.generation", *generation);
         }
         DiagnosticEvent::RestartScheduled {
             instance,
             attempt,
             delay,
         } => {
-            attribute(&mut attributes, "lenso.module.instance", instance);
+            attribute(&mut attributes, "lenso.plugin.instance", instance);
             attribute(&mut attributes, "lenso.supervision.attempt", *attempt);
             attribute(
                 &mut attributes,
@@ -281,14 +281,14 @@ pub fn diagnostic_to_signal(record: &DiagnosticRecord) -> OtelSignal {
             attempts,
             terminal,
         } => {
-            attribute(&mut attributes, "lenso.module.instance", instance);
+            attribute(&mut attributes, "lenso.plugin.instance", instance);
             attribute(&mut attributes, "lenso.supervision.attempts", *attempts);
             attribute(&mut attributes, "lenso.supervision.terminal", *terminal);
         }
         DiagnosticEvent::RuntimeFailure { instance, kind } => {
             optional_attribute(
                 &mut attributes,
-                "lenso.module.instance",
+                "lenso.plugin.instance",
                 instance.as_deref(),
             );
             attribute(
@@ -377,12 +377,12 @@ fn diagnostic_event_name(event: &DiagnosticEvent) -> &'static str {
     }
 }
 
-fn lifecycle_phase_name(phase: ModuleLifecyclePhase) -> &'static str {
+fn lifecycle_phase_name(phase: PluginLifecyclePhase) -> &'static str {
     match phase {
-        ModuleLifecyclePhase::Prepare => "prepare",
-        ModuleLifecyclePhase::Activate => "activate",
-        ModuleLifecyclePhase::Ready => "ready",
-        ModuleLifecyclePhase::Deactivate => "deactivate",
+        PluginLifecyclePhase::Prepare => "prepare",
+        PluginLifecyclePhase::Activate => "activate",
+        PluginLifecyclePhase::Ready => "ready",
+        PluginLifecyclePhase::Deactivate => "deactivate",
     }
 }
 
@@ -417,7 +417,7 @@ fn runtime_failure_name(kind: RuntimeFailureKind) -> &'static str {
         RuntimeFailureKind::UnknownOperation => "unknown_operation",
         RuntimeFailureKind::AmbiguousBinding => "ambiguous_binding",
         RuntimeFailureKind::ProtocolViolation => "protocol_violation",
-        RuntimeFailureKind::MissingModuleFactory => "missing_module_factory",
+        RuntimeFailureKind::MissingPluginFactory => "missing_plugin_factory",
         RuntimeFailureKind::UnavailableExecutionClass => "unavailable_execution_class",
         RuntimeFailureKind::InvalidResolvedPlan => "invalid_resolved_plan",
         RuntimeFailureKind::AdmissionClosed => "admission_closed",
@@ -425,7 +425,7 @@ fn runtime_failure_name(kind: RuntimeFailureKind) -> &'static str {
         RuntimeFailureKind::DeadlineExceeded => "deadline_exceeded",
         RuntimeFailureKind::Cancelled => "cancelled",
         RuntimeFailureKind::Internal => "internal",
-        RuntimeFailureKind::ModuleFailure => "module_failure",
-        RuntimeFailureKind::ModuleRestartExhausted => "module_restart_exhausted",
+        RuntimeFailureKind::PluginFailure => "plugin_failure",
+        RuntimeFailureKind::PluginRestartExhausted => "plugin_restart_exhausted",
     }
 }

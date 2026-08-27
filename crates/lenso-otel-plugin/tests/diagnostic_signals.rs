@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, time::Duration};
 use lenso_kernel::{
     DiagnosticEvent, DiagnosticOutcome, DiagnosticRecord, DiagnosticSource, RuntimeFailureKind,
 };
-use lenso_otel_module::{OtelSeverity, OtelSignal, diagnostic_to_signal};
+use lenso_otel_plugin::{OtelSeverity, OtelSignal, diagnostic_to_signal};
 
 #[test]
 fn converts_structural_runtime_facts_to_an_otel_log_without_payloads() {
@@ -51,7 +51,7 @@ fn runtime_failure_export_contains_only_a_sanitized_category() {
         source: DiagnosticSource::RuntimeFailure,
         event: DiagnosticEvent::RuntimeFailure {
             instance: Some("provider".to_owned()),
-            kind: RuntimeFailureKind::ModuleFailure,
+            kind: RuntimeFailureKind::PluginFailure,
         },
     };
 
@@ -61,16 +61,16 @@ fn runtime_failure_export_contains_only_a_sanitized_category() {
     assert_eq!(log.severity, OtelSeverity::Error);
     assert_eq!(
         log.attributes.get("lenso.runtime_failure.kind"),
-        Some(&"module_failure".to_owned())
+        Some(&"plugin_failure".to_owned())
     );
     assert_eq!(log.attributes.len(), 6);
 }
 
 #[test]
 fn application_signals_have_explicit_otel_shapes() {
-    let span = lenso_otel_module::OtelSpan {
+    let span = lenso_otel_plugin::OtelSpan {
         name: "greet".to_owned(),
-        trace_context: lenso_otel_module::TraceContext::from_traceparent(
+        trace_context: lenso_otel_plugin::TraceContext::from_traceparent(
             "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
             None,
         )
@@ -80,7 +80,7 @@ fn application_signals_have_explicit_otel_shapes() {
         ended_at: Some(Duration::from_millis(1)),
         attributes: BTreeMap::new(),
     };
-    let metric = lenso_otel_module::OtelMetric {
+    let metric = lenso_otel_plugin::OtelMetric {
         name: "requests".to_owned(),
         value: 1.0,
         unit: Some("{request}".to_owned()),

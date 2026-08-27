@@ -7,19 +7,19 @@ use std::{
 };
 
 use futures::future::LocalBoxFuture;
-use lenso_app_plan::{AppComposition, ModuleInstancePlan, ResolvedAppPlan};
+use lenso_app_plan::{AppComposition, PluginInstancePlan, ResolvedAppPlan};
 use lenso_app_plan::{CapabilityBinding, CapabilityEndpointPlan, CapabilityRequirementPlan};
 use lenso_kernel::{
     DeterministicDriver, InvocationContext, Kernel, NativeRequestEndpoint, RequestCapability,
     RuntimeDiagnostics, RuntimeDriver, RuntimeFailure, ShutdownOutcome,
 };
 use lenso_native_adapter::{
-    NativeModuleFactory, NativeModuleFactoryContext, NativeModuleInstance, NativeModuleRegistry,
+    NativePluginFactory, NativePluginFactoryContext, NativePluginInstance, NativePluginRegistry,
 };
-use lenso_otel_module::{
-    OTEL_MODULE_PACKAGE_ID, OTEL_TELEMETRY_CAPABILITY_ID, OTEL_TELEMETRY_DESCRIPTOR_VERSION,
-    OTEL_TELEMETRY_OPERATION, OtelExportStats, OtelExporter, OtelLog, OtelModuleConfig,
-    OtelModuleFactory, OtelSeverity, OtelSignal, OtelTelemetry, TelemetryAdmission,
+use lenso_otel_plugin::{
+    OTEL_PLUGIN_PACKAGE_ID, OTEL_TELEMETRY_CAPABILITY_ID, OTEL_TELEMETRY_DESCRIPTOR_VERSION,
+    OTEL_TELEMETRY_OPERATION, OtelExportStats, OtelExporter, OtelLog, OtelPluginConfig,
+    OtelPluginFactory, OtelSeverity, OtelSignal, OtelTelemetry, TelemetryAdmission,
 };
 
 const CALLER_PACKAGE_ID: &str = "test.otel-caller";
@@ -30,16 +30,16 @@ const BUSINESS_OPERATION: &str = "echo";
 #[derive(Debug)]
 struct NoopFactory;
 
-impl NativeModuleFactory for NoopFactory {
+impl NativePluginFactory for NoopFactory {
     fn package_id(&self) -> &'static str {
         CALLER_PACKAGE_ID
     }
 
     fn instantiate(
         &self,
-        _context: NativeModuleFactoryContext<'_>,
-    ) -> Result<NativeModuleInstance, lenso_kernel::RuntimeFailure> {
-        Ok(NativeModuleInstance::default())
+        _context: NativePluginFactoryContext<'_>,
+    ) -> Result<NativePluginInstance, lenso_kernel::RuntimeFailure> {
+        Ok(NativePluginInstance::default())
     }
 }
 
@@ -99,16 +99,16 @@ impl NativeRequestEndpoint for BusinessEndpoint {
 #[derive(Debug)]
 struct BusinessFactory;
 
-impl NativeModuleFactory for BusinessFactory {
+impl NativePluginFactory for BusinessFactory {
     fn package_id(&self) -> &'static str {
         BUSINESS_PACKAGE_ID
     }
 
     fn instantiate(
         &self,
-        _context: NativeModuleFactoryContext<'_>,
-    ) -> Result<NativeModuleInstance, RuntimeFailure> {
-        Ok(NativeModuleInstance::new(vec![Rc::new(BusinessEndpoint)]))
+        _context: NativePluginFactoryContext<'_>,
+    ) -> Result<NativePluginInstance, RuntimeFailure> {
+        Ok(NativePluginInstance::new(vec![Rc::new(BusinessEndpoint)]))
     }
 }
 
@@ -135,12 +135,12 @@ impl OtelExporter for RecordingExporter {
     fn export(
         &self,
         signal: OtelSignal,
-    ) -> LocalBoxFuture<'static, Result<(), lenso_otel_module::ExportError>> {
+    ) -> LocalBoxFuture<'static, Result<(), lenso_otel_plugin::ExportError>> {
         let signals = self.signals.clone();
         let fail = self.fail.clone();
         Box::pin(async move {
             if fail.get() {
-                return Err(lenso_otel_module::ExportError::Rejected);
+                return Err(lenso_otel_plugin::ExportError::Rejected);
             }
             signals.borrow_mut().push(signal);
             Ok(())
@@ -155,14 +155,14 @@ impl OtelExporter for PendingExporter {
     fn export(
         &self,
         _signal: OtelSignal,
-    ) -> LocalBoxFuture<'static, Result<(), lenso_otel_module::ExportError>> {
+    ) -> LocalBoxFuture<'static, Result<(), lenso_otel_plugin::ExportError>> {
         Box::pin(futures::future::pending())
     }
 }
 
 fn plan() -> ResolvedAppPlan {
     AppComposition::new(
-        vec![ModuleInstancePlan::new("otel", OTEL_MODULE_PACKAGE_ID)],
+        vec![PluginInstancePlan::new("otel", OTEL_PLUGIN_PACKAGE_ID)],
         Vec::new(),
     )
     .resolve()
@@ -170,13 +170,13 @@ fn plan() -> ResolvedAppPlan {
 }
 
 fn telemetry_plan() -> ResolvedAppPlan {
-    let caller = ModuleInstancePlan::new("caller", CALLER_PACKAGE_ID).with_requirement(
+    let caller = PluginInstancePlan::new("caller", CALLER_PACKAGE_ID).with_requirement(
         CapabilityRequirementPlan::one(
             OTEL_TELEMETRY_CAPABILITY_ID,
             OTEL_TELEMETRY_DESCRIPTOR_VERSION,
         ),
     );
-    let otel = ModuleInstancePlan::new("otel", OTEL_MODULE_PACKAGE_ID).with_capability(
+    let otel = PluginInstancePlan::new("otel", OTEL_PLUGIN_PACKAGE_ID).with_capability(
         CapabilityEndpointPlan::new(
             OTEL_TELEMETRY_CAPABILITY_ID,
             OTEL_TELEMETRY_DESCRIPTOR_VERSION,
@@ -197,10 +197,10 @@ fn telemetry_plan() -> ResolvedAppPlan {
 }
 
 fn business_plan(include_otel: bool) -> ResolvedAppPlan {
-    let caller = ModuleInstancePlan::new("caller", CALLER_PACKAGE_ID).with_requirement(
+    let caller = PluginInstancePlan::new("caller", CALLER_PACKAGE_ID).with_requirement(
         CapabilityRequirementPlan::one(BUSINESS_CAPABILITY_ID, Business::DESCRIPTOR_VERSION),
     );
-    let provider = ModuleInstancePlan::new("business", BUSINESS_PACKAGE_ID).with_capability(
+    let provider = PluginInstancePlan::new("business", BUSINESS_PACKAGE_ID).with_capability(
         CapabilityEndpointPlan::new(
             BUSINESS_CAPABILITY_ID,
             Business::DESCRIPTOR_VERSION,
@@ -209,7 +209,7 @@ fn business_plan(include_otel: bool) -> ResolvedAppPlan {
     );
     let mut instances = vec![caller, provider];
     if include_otel {
-        instances.push(ModuleInstancePlan::new("otel", OTEL_MODULE_PACKAGE_ID));
+        instances.push(PluginInstancePlan::new("otel", OTEL_PLUGIN_PACKAGE_ID));
     }
     AppComposition::new(
         instances,
@@ -236,13 +236,13 @@ fn log_signal(body: &str) -> OtelSignal {
 fn start(
     driver: &DeterministicDriver,
     diagnostics: RuntimeDiagnostics,
-    factory: OtelModuleFactory,
+    factory: OtelPluginFactory,
 ) -> lenso_kernel::NativeApp {
     driver
         .run(Kernel::start_native_with_diagnostics(
             plan(),
             driver.clone(),
-            NativeModuleRegistry::new().with_factory(factory),
+            NativePluginRegistry::new().with_factory(factory),
             diagnostics,
         ))
         .expect("the OTel Module must not gate App readiness")
@@ -251,13 +251,13 @@ fn start(
 fn start_with_telemetry_capability(
     driver: &DeterministicDriver,
     diagnostics: RuntimeDiagnostics,
-    factory: OtelModuleFactory,
+    factory: OtelPluginFactory,
 ) -> lenso_kernel::NativeApp {
     driver
         .run(Kernel::start_native_with_diagnostics(
             telemetry_plan(),
             driver.clone(),
-            NativeModuleRegistry::new()
+            NativePluginRegistry::new()
                 .with_factory(factory)
                 .with_factory(NoopFactory),
             diagnostics,
@@ -270,7 +270,7 @@ fn exporter_is_async_and_explicit_telemetry_does_not_gate_readiness() {
     let driver = DeterministicDriver::new();
     let diagnostics = RuntimeDiagnostics::new();
     let exporter = RecordingExporter::new();
-    let factory = OtelModuleFactory::new(diagnostics.clone(), exporter.clone());
+    let factory = OtelPluginFactory::new(diagnostics.clone(), exporter.clone());
     let telemetry = factory.telemetry_for("otel");
     let app = start(&driver, diagnostics, factory);
 
@@ -300,7 +300,7 @@ fn explicit_telemetry_capability_enqueues_through_a_declared_binding() {
     let diagnostics = RuntimeDiagnostics::new();
     let exporter = RecordingExporter::new();
     let factory =
-        OtelModuleFactory::new(diagnostics.clone(), exporter.clone()).with_telemetry_capability();
+        OtelPluginFactory::new(diagnostics.clone(), exporter.clone()).with_telemetry_capability();
     let app = start_with_telemetry_capability(&driver, diagnostics, factory);
 
     let response = driver.run(app.invoke::<OtelTelemetry>(
@@ -328,8 +328,8 @@ fn exporter_failures_are_isolated_from_app_terminal_outcomes() {
     let diagnostics = RuntimeDiagnostics::new();
     let exporter = RecordingExporter::new();
     exporter.fail.set(true);
-    let factory = OtelModuleFactory::new(diagnostics.clone(), exporter)
-        .with_config(OtelModuleConfig::default().with_diagnostic_queue_capacity(2));
+    let factory = OtelPluginFactory::new(diagnostics.clone(), exporter)
+        .with_config(OtelPluginConfig::default().with_diagnostic_queue_capacity(2));
     let stats = factory.stats();
     let telemetry = factory.telemetry_for("otel");
     let app = start(&driver, diagnostics, factory);
@@ -351,8 +351,8 @@ fn exporter_failures_are_isolated_from_app_terminal_outcomes() {
 fn slow_exporter_drops_bounded_telemetry_and_shutdown_remains_bounded() {
     let driver = DeterministicDriver::new();
     let diagnostics = RuntimeDiagnostics::new();
-    let factory = OtelModuleFactory::new(diagnostics.clone(), PendingExporter).with_config(
-        OtelModuleConfig::default()
+    let factory = OtelPluginFactory::new(diagnostics.clone(), PendingExporter).with_config(
+        OtelPluginConfig::default()
             .with_diagnostic_queue_capacity(1)
             .with_telemetry_queue_capacity(1),
     );
@@ -383,14 +383,14 @@ fn slow_exporter_drops_bounded_telemetry_and_shutdown_remains_bounded() {
 fn telemetry_queues_are_isolated_by_module_instance_and_close_on_shutdown() {
     let driver = DeterministicDriver::new();
     let diagnostics = RuntimeDiagnostics::new();
-    let factory = OtelModuleFactory::new(diagnostics.clone(), PendingExporter)
-        .with_config(OtelModuleConfig::default().with_telemetry_queue_capacity(1));
+    let factory = OtelPluginFactory::new(diagnostics.clone(), PendingExporter)
+        .with_config(OtelPluginConfig::default().with_telemetry_queue_capacity(1));
     let first = factory.telemetry_for("otel-a");
     let second = factory.telemetry_for("otel-b");
     let plan = AppComposition::new(
         vec![
-            ModuleInstancePlan::new("otel-a", OTEL_MODULE_PACKAGE_ID),
-            ModuleInstancePlan::new("otel-b", OTEL_MODULE_PACKAGE_ID),
+            PluginInstancePlan::new("otel-a", OTEL_PLUGIN_PACKAGE_ID),
+            PluginInstancePlan::new("otel-b", OTEL_PLUGIN_PACKAGE_ID),
         ],
         Vec::new(),
     )
@@ -400,7 +400,7 @@ fn telemetry_queues_are_isolated_by_module_instance_and_close_on_shutdown() {
         .run(Kernel::start_native_with_diagnostics(
             plan,
             driver.clone(),
-            NativeModuleRegistry::new().with_factory(factory),
+            NativePluginRegistry::new().with_factory(factory),
             diagnostics,
         ))
         .expect("two OTel generations should activate independently");
@@ -434,11 +434,11 @@ fn telemetry_queues_are_isolated_by_module_instance_and_close_on_shutdown() {
 fn run_business_plan(include_otel: bool) -> (bool, bool, String, ShutdownOutcome) {
     let driver = DeterministicDriver::new();
     let diagnostics = RuntimeDiagnostics::new();
-    let registry = NativeModuleRegistry::new()
+    let registry = NativePluginRegistry::new()
         .with_factory(NoopFactory)
         .with_factory(BusinessFactory);
     let registry = if include_otel {
-        registry.with_factory(OtelModuleFactory::new(diagnostics.clone(), PendingExporter))
+        registry.with_factory(OtelPluginFactory::new(diagnostics.clone(), PendingExporter))
     } else {
         registry
     };

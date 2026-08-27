@@ -1,0 +1,25 @@
+[package]
+name = "lenso-otel-plugin"
+version = "0.1.3"
+edition.workspace = true
+license.workspace = true
+publish = true
+repository.workspace = true
+rust-version.workspace = true
+description = "OpenTelemetry Plugin for Lenso vNext applications."
+
+[dependencies]
+base64.workspace = true
+futures.workspace = true
+hmac.workspace = true
+lenso-kernel = { version = "0.2.0", git = "https://github.com/LioRael/lenso", rev = "cd35675a191d815b690c8889756dfe859a0e4d7b" }
+lenso-native-adapter = { version = "0.3.0", git = "https://github.com/LioRael/lenso-runtime-rust", rev = "b763a63adc20f1ccc9955e784c0d04c21489126b" }
+sha2.workspace = true
+
+[dev-dependencies]
+lenso-app-plan = { version = "0.3.0", git = "https://github.com/LioRael/lenso", rev = "cd35675a191d815b690c8889756dfe859a0e4d7b" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
