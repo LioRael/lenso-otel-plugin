@@ -1,6 +1,6 @@
-# Lenso OpenTelemetry Module
+# Lenso OpenTelemetry Plugin
 
-A removable OpenTelemetry Module for Lenso applications. It consumes the
+A removable OpenTelemetry Plugin for Lenso applications. It consumes the
 published Kernel and Native Execution Adapter Interfaces; observability
 semantics do not live in the portable core.
 

@@ -4,7 +4,7 @@ import {
   extractTraceContext,
   injectTraceContext,
   TraceContextError,
-} from "../../crates/lenso-otel-module/typescript/trace-context.ts";
+} from "../../crates/lenso-otel-plugin/typescript/trace-context.ts";
 import fixture from "./trace-context-conformance.json";
 
 test("Rust and TypeScript share the sealed trace-context contract", async () => {

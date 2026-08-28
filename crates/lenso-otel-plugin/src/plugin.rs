@@ -3,10 +3,10 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use futures::future::LocalBoxFuture;
 use lenso_kernel::{
     ActivateContext, DeactivateContext, DiagnosticFilter, DiagnosticObserver, InvocationContext,
-    ModuleDependencies, ModuleFuture, ModuleLifecycle, NativeRequestEndpoint, NativeRequestHandle,
+    NativeRequestEndpoint, NativeRequestHandle, PluginDependencies, PluginFuture, PluginLifecycle,
     RequestCapability, RuntimeDiagnostics, RuntimeFailure,
 };
-use lenso_native_adapter::{NativeModuleFactory, NativeModuleFactoryContext, NativeModuleInstance};
+use lenso_native_adapter::{NativePluginFactory, NativePluginFactoryContext, NativePluginInstance};
 
 use crate::{
     OtelSignal,
@@ -16,8 +16,8 @@ use crate::{
     },
 };
 
-/// Package identity for the optional OpenTelemetry Module.
-pub const OTEL_MODULE_PACKAGE_ID: &str = "lenso.opentelemetry.module";
+/// Package identity for the optional OpenTelemetry Plugin.
+pub const OTEL_PLUGIN_PACKAGE_ID: &str = "lenso.opentelemetry.module";
 
 /// Capability identity for explicit application telemetry input.
 pub const OTEL_TELEMETRY_CAPABILITY_ID: &str = "lenso.otel.telemetry@1";
@@ -36,13 +36,13 @@ pub const DEFAULT_TELEMETRY_QUEUE_CAPACITY: usize = 256;
 
 /// `OTel` Runtime Diagnostics and application-signal selection.
 #[derive(Clone, Debug)]
-pub struct OtelModuleConfig {
+pub struct OtelPluginConfig {
     diagnostic_filter: DiagnosticFilter,
     diagnostic_queue_capacity: usize,
     telemetry_queue_capacity: usize,
 }
 
-impl OtelModuleConfig {
+impl OtelPluginConfig {
     /// Creates the default all-source, bounded `OTel` configuration.
     pub fn new() -> Self {
         Self::default()
@@ -82,7 +82,7 @@ impl OtelModuleConfig {
     }
 }
 
-impl Default for OtelModuleConfig {
+impl Default for OtelPluginConfig {
     fn default() -> Self {
         Self {
             diagnostic_filter: DiagnosticFilter::all(),
@@ -137,7 +137,7 @@ impl OtelTelemetryClient {
     }
 
     /// Resolves the one `OTel` telemetry dependency from Module lifecycle bindings.
-    pub fn from_dependencies(dependencies: &ModuleDependencies) -> Result<Self, RuntimeFailure> {
+    pub fn from_dependencies(dependencies: &PluginDependencies) -> Result<Self, RuntimeFailure> {
         Ok(Self::new(dependencies.one::<OtelTelemetry>()?))
     }
 
@@ -156,19 +156,19 @@ impl OtelTelemetryClient {
 
 /// Native Rust factory for the removable `OTel` Module.
 #[derive(Debug)]
-pub struct OtelModuleFactory {
+pub struct OtelPluginFactory {
     diagnostics: RuntimeDiagnostics,
     exporter: Rc<dyn OtelExporter>,
-    config: OtelModuleConfig,
+    config: OtelPluginConfig,
     telemetry_routes: RefCell<BTreeMap<String, TelemetryHandle>>,
     stats: OtelExportStats,
     expose_telemetry_capability: bool,
 }
 
-impl OtelModuleFactory {
+impl OtelPluginFactory {
     /// Creates a diagnostics/export Module with no required exporter behavior.
     pub fn new<E: OtelExporter>(diagnostics: RuntimeDiagnostics, exporter: E) -> Self {
-        let config = OtelModuleConfig::default();
+        let config = OtelPluginConfig::default();
         Self {
             diagnostics,
             exporter: Rc::new(exporter),
@@ -181,7 +181,7 @@ impl OtelModuleFactory {
 
     /// Applies Module-owned queue and source policy before the factory is linked.
     #[must_use]
-    pub fn with_config(mut self, config: OtelModuleConfig) -> Self {
+    pub fn with_config(mut self, config: OtelPluginConfig) -> Self {
         self.config = config;
         self
     }
@@ -209,15 +209,15 @@ impl OtelModuleFactory {
     }
 }
 
-impl NativeModuleFactory for OtelModuleFactory {
+impl NativePluginFactory for OtelPluginFactory {
     fn package_id(&self) -> &'static str {
-        OTEL_MODULE_PACKAGE_ID
+        OTEL_PLUGIN_PACKAGE_ID
     }
 
     fn instantiate(
         &self,
-        context: NativeModuleFactoryContext<'_>,
-    ) -> Result<NativeModuleInstance, RuntimeFailure> {
+        context: NativePluginFactoryContext<'_>,
+    ) -> Result<NativePluginInstance, RuntimeFailure> {
         let observer = self
             .diagnostics
             .subscribe(
@@ -229,7 +229,7 @@ impl NativeModuleFactory for OtelModuleFactory {
             })?;
         let telemetry = GenerationTelemetry::new(self.config.telemetry_queue_capacity());
         let host_telemetry = self.telemetry_for(context.instance_key());
-        let lifecycle = OtelModuleLifecycle {
+        let lifecycle = OtelPluginLifecycle {
             observer: RefCell::new(Some(observer)),
             telemetry: telemetry.clone(),
             host_telemetry,
@@ -241,12 +241,12 @@ impl NativeModuleFactory for OtelModuleFactory {
         } else {
             Vec::new()
         };
-        Ok(NativeModuleInstance::with_lifecycle(endpoints, lifecycle))
+        Ok(NativePluginInstance::with_lifecycle(endpoints, lifecycle))
     }
 }
 
 #[derive(Debug)]
-struct OtelModuleLifecycle {
+struct OtelPluginLifecycle {
     observer: RefCell<Option<DiagnosticObserver>>,
     telemetry: GenerationTelemetry,
     host_telemetry: TelemetryHandle,
@@ -254,8 +254,8 @@ struct OtelModuleLifecycle {
     stats: OtelExportStats,
 }
 
-impl ModuleLifecycle for OtelModuleLifecycle {
-    fn activate(&self, context: ActivateContext) -> ModuleFuture {
+impl PluginLifecycle for OtelPluginLifecycle {
+    fn activate(&self, context: ActivateContext) -> PluginFuture {
         let observer = self.observer.borrow_mut().take();
         let telemetry = self.telemetry.clone();
         let host_telemetry = self.host_telemetry.clone();
@@ -306,7 +306,7 @@ impl ModuleLifecycle for OtelModuleLifecycle {
         })
     }
 
-    fn deactivate(&self, _context: DeactivateContext) -> ModuleFuture {
+    fn deactivate(&self, _context: DeactivateContext) -> PluginFuture {
         self.host_telemetry.deactivate(&self.telemetry);
         Box::pin(futures::future::ready(Ok(())))
     }

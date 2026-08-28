@@ -3,16 +3,16 @@ use std::{any::Any, rc::Rc, time::Duration};
 use futures::future::LocalBoxFuture;
 use lenso_app_plan::{
     AppComposition, CapabilityBinding, CapabilityEndpointPlan, CapabilityRequirementPlan,
-    ModuleInstancePlan,
+    PluginInstancePlan,
 };
 use lenso_kernel::{
     CancellationToken, DeterministicDriver, InvocationContext, InvocationContextError, Kernel,
     NativeRequestEndpoint, RequestCapability, RuntimeFailure, ShutdownOutcome,
 };
 use lenso_native_adapter::{
-    NativeModuleFactory, NativeModuleFactoryContext, NativeModuleInstance, NativeModuleRegistry,
+    NativePluginFactory, NativePluginFactoryContext, NativePluginInstance, NativePluginRegistry,
 };
-use lenso_otel_module::{
+use lenso_otel_plugin::{
     TRACE_CONTEXT_EXTENSION_KEY, TraceContext, TraceContextError, TraceContextPropagator,
 };
 use serde::Deserialize;
@@ -226,15 +226,15 @@ struct NativeTraceFactory {
     propagator: Option<TraceContextPropagator>,
 }
 
-impl NativeModuleFactory for NativeTraceFactory {
+impl NativePluginFactory for NativeTraceFactory {
     fn package_id(&self) -> &'static str {
         self.package_id
     }
 
     fn instantiate(
         &self,
-        _context: NativeModuleFactoryContext<'_>,
-    ) -> Result<NativeModuleInstance, RuntimeFailure> {
+        _context: NativePluginFactoryContext<'_>,
+    ) -> Result<NativePluginInstance, RuntimeFailure> {
         let endpoints = self
             .propagator
             .as_ref()
@@ -243,7 +243,7 @@ impl NativeModuleFactory for NativeTraceFactory {
                     propagator: propagator.clone(),
                 }) as Rc<dyn NativeRequestEndpoint>]
             });
-        Ok(NativeModuleInstance::new(endpoints))
+        Ok(NativePluginInstance::new(endpoints))
     }
 }
 
@@ -251,10 +251,10 @@ impl NativeModuleFactory for NativeTraceFactory {
 fn native_adapter_preserves_and_filters_sealed_trace_context() {
     let driver = DeterministicDriver::new();
     let propagator = propagator();
-    let caller = ModuleInstancePlan::new("caller", "test.native-trace-caller").with_requirement(
+    let caller = PluginInstancePlan::new("caller", "test.native-trace-caller").with_requirement(
         CapabilityRequirementPlan::one(NATIVE_TRACE_CAPABILITY_ID, NativeTrace::DESCRIPTOR_VERSION),
     );
-    let provider = ModuleInstancePlan::new("provider", "test.native-trace-provider")
+    let provider = PluginInstancePlan::new("provider", "test.native-trace-provider")
         .with_capability(CapabilityEndpointPlan::new(
             NATIVE_TRACE_CAPABILITY_ID,
             NativeTrace::DESCRIPTOR_VERSION,
@@ -275,7 +275,7 @@ fn native_adapter_preserves_and_filters_sealed_trace_context() {
         .run(Kernel::start_native(
             plan,
             driver.clone(),
-            NativeModuleRegistry::new()
+            NativePluginRegistry::new()
                 .with_factory(NativeTraceFactory {
                     package_id: "test.native-trace-caller",
                     propagator: None,
