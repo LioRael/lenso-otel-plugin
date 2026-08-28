@@ -21,7 +21,7 @@ jobs:
       - run: cargo check --locked --workspace --all-targets
       - run: cargo test --locked --workspace
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - run: cargo package --locked -p lenso-otel-module
+      - run: cargo package --locked -p lenso-otel-plugin
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.2.21
