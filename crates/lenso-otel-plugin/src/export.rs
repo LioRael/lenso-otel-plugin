@@ -15,6 +15,28 @@ use lenso_kernel::{CancellationToken, DiagnosticObserver};
 
 use crate::{OtelSignal, diagnostic_to_signal};
 
+/// Maximum conservative encoded size of one queued `OTel` signal.
+pub const MAX_OTEL_SIGNAL_ENCODED_BYTES: usize = 64 * 1024;
+/// Maximum UTF-8 size of a span or metric name.
+pub const MAX_OTEL_SIGNAL_NAME_BYTES: usize = 256;
+/// Maximum UTF-8 size of a log body.
+pub const MAX_OTEL_LOG_BODY_BYTES: usize = 16 * 1024;
+/// Maximum UTF-8 size of a metric unit.
+pub const MAX_OTEL_METRIC_UNIT_BYTES: usize = 128;
+/// Maximum attribute cardinality on one signal.
+pub const MAX_OTEL_ATTRIBUTES: usize = 64;
+/// Maximum UTF-8 size of one attribute key.
+pub const MAX_OTEL_ATTRIBUTE_KEY_BYTES: usize = 256;
+/// Maximum UTF-8 size of one attribute value.
+pub const MAX_OTEL_ATTRIBUTE_VALUE_BYTES: usize = 4 * 1024;
+
+const MAX_TRACE_STATE_BYTES: usize = 512;
+// Admission accounts for a conservative fixed structural envelope and an
+// eight-byte length prefix per UTF-8 field. Exporter protocol framing is not
+// retained in the in-process queue and remains exporter-owned.
+const ENCODED_SIGNAL_FIXED_BYTES: usize = 64;
+const ENCODED_STRING_OVERHEAD_BYTES: usize = 8;
+
 /// Failure reported by an `OTel` exporter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExportError {
@@ -54,7 +76,7 @@ pub enum TelemetryAdmission {
 /// Invalid explicit application signal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TelemetryError {
-    /// A required name, span identity, or attribute key was empty or invalid.
+    /// A required field was invalid or the signal exceeded an admission bound.
     InvalidSignal,
 }
 
@@ -313,9 +335,14 @@ pub(crate) async fn export_diagnostics(
         let Some(record) = record else {
             return;
         };
+        let signal = diagnostic_to_signal(&record);
+        if validate_signal(&signal).is_err() {
+            stats.record_failed();
+            continue;
+        }
         if !export_one(
             exporter.clone(),
-            diagnostic_to_signal(&record),
+            signal,
             stats.clone(),
             cancellation.clone(),
         )
@@ -382,30 +409,98 @@ async fn export_one(
 }
 
 pub(crate) fn validate_signal(signal: &OtelSignal) -> Result<(), TelemetryError> {
-    let valid_attributes = |attributes: &std::collections::BTreeMap<String, String>| {
-        attributes.keys().all(|key| !key.is_empty())
-    };
-    let valid = match signal {
+    validated_signal_encoded_size(signal).map(drop)
+}
+
+fn validated_signal_encoded_size(signal: &OtelSignal) -> Result<usize, TelemetryError> {
+    let mut encoded_bytes = ENCODED_SIGNAL_FIXED_BYTES;
+    let attributes = match signal {
         OtelSignal::Span(span) => {
-            !span.name.is_empty()
-                && span.trace_context.span_id().iter().any(|byte| *byte != 0)
-                && span.ended_at.is_none_or(|end| end >= span.started_at)
-                && valid_attributes(&span.attributes)
+            if span.trace_context.span_id().iter().all(|byte| *byte == 0)
+                || span
+                    .parent_span_id
+                    .is_some_and(|parent| parent.iter().all(|byte| *byte == 0))
+                || span.ended_at.is_some_and(|end| end < span.started_at)
+            {
+                return Err(TelemetryError::InvalidSignal);
+            }
+            add_text(
+                &mut encoded_bytes,
+                &span.name,
+                MAX_OTEL_SIGNAL_NAME_BYTES,
+                true,
+            )?;
+            if let Some(tracestate) = span.trace_context.tracestate() {
+                add_text(&mut encoded_bytes, tracestate, MAX_TRACE_STATE_BYTES, true)?;
+            }
+            &span.attributes
         }
         OtelSignal::Metric(metric) => {
-            !metric.name.is_empty()
-                && metric.value.is_finite()
-                && valid_attributes(&metric.attributes)
+            if !metric.value.is_finite() {
+                return Err(TelemetryError::InvalidSignal);
+            }
+            add_text(
+                &mut encoded_bytes,
+                &metric.name,
+                MAX_OTEL_SIGNAL_NAME_BYTES,
+                true,
+            )?;
+            if let Some(unit) = &metric.unit {
+                add_text(&mut encoded_bytes, unit, MAX_OTEL_METRIC_UNIT_BYTES, true)?;
+            }
+            &metric.attributes
         }
-        OtelSignal::Log(log) => !log.body.is_empty() && valid_attributes(&log.attributes),
+        OtelSignal::Log(log) => {
+            add_text(&mut encoded_bytes, &log.body, MAX_OTEL_LOG_BODY_BYTES, true)?;
+            &log.attributes
+        }
     };
-    valid.then_some(()).ok_or(TelemetryError::InvalidSignal)
+    validate_attributes(&mut encoded_bytes, attributes)?;
+    Ok(encoded_bytes)
+}
+
+fn validate_attributes(
+    encoded_bytes: &mut usize,
+    attributes: &std::collections::BTreeMap<String, String>,
+) -> Result<(), TelemetryError> {
+    if attributes.len() > MAX_OTEL_ATTRIBUTES {
+        return Err(TelemetryError::InvalidSignal);
+    }
+    for (key, value) in attributes {
+        add_text(encoded_bytes, key, MAX_OTEL_ATTRIBUTE_KEY_BYTES, true)?;
+        add_text(encoded_bytes, value, MAX_OTEL_ATTRIBUTE_VALUE_BYTES, false)?;
+    }
+    Ok(())
+}
+
+fn add_text(
+    encoded_bytes: &mut usize,
+    value: &str,
+    maximum_bytes: usize,
+    required: bool,
+) -> Result<(), TelemetryError> {
+    if (required && value.is_empty()) || value.len() > maximum_bytes {
+        return Err(TelemetryError::InvalidSignal);
+    }
+    *encoded_bytes = encoded_bytes
+        .checked_add(ENCODED_STRING_OVERHEAD_BYTES)
+        .and_then(|size| size.checked_add(value.len()))
+        .filter(|size| *size <= MAX_OTEL_SIGNAL_ENCODED_BYTES)
+        .ok_or(TelemetryError::InvalidSignal)?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{GenerationTelemetry, TelemetryHandle, TelemetryQueue};
-    use crate::{OtelLog, OtelSeverity, OtelSignal};
+    use super::{
+        ENCODED_STRING_OVERHEAD_BYTES, GenerationTelemetry, MAX_OTEL_ATTRIBUTE_KEY_BYTES,
+        MAX_OTEL_ATTRIBUTE_VALUE_BYTES, MAX_OTEL_ATTRIBUTES, MAX_OTEL_LOG_BODY_BYTES,
+        MAX_OTEL_METRIC_UNIT_BYTES, MAX_OTEL_SIGNAL_ENCODED_BYTES, MAX_OTEL_SIGNAL_NAME_BYTES,
+        TelemetryHandle, TelemetryQueue, validated_signal_encoded_size,
+    };
+    use crate::{
+        OtelLog, OtelMetric, OtelSeverity, OtelSignal, OtelSpan, TelemetryError, TraceContext,
+    };
     use std::{collections::BTreeMap, time::Duration};
 
     #[test]
@@ -477,5 +572,161 @@ mod tests {
             handle.try_emit(signal),
             Ok(super::TelemetryAdmission::Closed)
         );
+    }
+
+    #[test]
+    fn individual_signal_fields_and_attribute_cardinality_have_exact_bounds() {
+        let span = |name: String| {
+            OtelSignal::Span(OtelSpan {
+                name,
+                trace_context: trace_context(),
+                parent_span_id: None,
+                started_at: Duration::ZERO,
+                ended_at: Some(Duration::ZERO),
+                attributes: BTreeMap::new(),
+            })
+        };
+        assert!(super::validate_signal(&span("n".repeat(MAX_OTEL_SIGNAL_NAME_BYTES))).is_ok());
+        assert_eq!(
+            super::validate_signal(&span("n".repeat(MAX_OTEL_SIGNAL_NAME_BYTES + 1))),
+            Err(TelemetryError::InvalidSignal)
+        );
+
+        let mut metric = OtelMetric {
+            name: "m".repeat(MAX_OTEL_SIGNAL_NAME_BYTES),
+            value: 1.0,
+            unit: Some("u".repeat(MAX_OTEL_METRIC_UNIT_BYTES)),
+            timestamp: Duration::ZERO,
+            attributes: BTreeMap::new(),
+        };
+        assert!(super::validate_signal(&OtelSignal::Metric(metric.clone())).is_ok());
+        metric.unit = Some("u".repeat(MAX_OTEL_METRIC_UNIT_BYTES + 1));
+        assert_eq!(
+            super::validate_signal(&OtelSignal::Metric(metric)),
+            Err(TelemetryError::InvalidSignal)
+        );
+
+        let mut attributes = (0..MAX_OTEL_ATTRIBUTES)
+            .map(|index| (format!("key-{index}"), String::new()))
+            .collect::<BTreeMap<_, _>>();
+        assert!(super::validate_signal(&log("body", attributes.clone())).is_ok());
+        attributes.insert("one-too-many".to_owned(), String::new());
+        assert_eq!(
+            super::validate_signal(&log("body", attributes)),
+            Err(TelemetryError::InvalidSignal)
+        );
+    }
+
+    #[test]
+    fn body_attribute_and_aggregate_encoded_sizes_have_exact_bounds() {
+        assert!(
+            super::validate_signal(&log(&"b".repeat(MAX_OTEL_LOG_BODY_BYTES), BTreeMap::new()))
+                .is_ok()
+        );
+        assert_eq!(
+            super::validate_signal(&log(
+                &"b".repeat(MAX_OTEL_LOG_BODY_BYTES + 1),
+                BTreeMap::new(),
+            )),
+            Err(TelemetryError::InvalidSignal)
+        );
+
+        let attributes = BTreeMap::from([(
+            "k".repeat(MAX_OTEL_ATTRIBUTE_KEY_BYTES),
+            "v".repeat(MAX_OTEL_ATTRIBUTE_VALUE_BYTES),
+        )]);
+        assert!(super::validate_signal(&log("body", attributes.clone())).is_ok());
+        let oversized_key =
+            BTreeMap::from([("k".repeat(MAX_OTEL_ATTRIBUTE_KEY_BYTES + 1), String::new())]);
+        assert_eq!(
+            super::validate_signal(&log("body", oversized_key)),
+            Err(TelemetryError::InvalidSignal)
+        );
+        let oversized_value = BTreeMap::from([(
+            "key".to_owned(),
+            "v".repeat(MAX_OTEL_ATTRIBUTE_VALUE_BYTES + 1),
+        )]);
+        assert_eq!(
+            super::validate_signal(&log("body", oversized_value)),
+            Err(TelemetryError::InvalidSignal)
+        );
+
+        let mut aggregate = log(&"b".repeat(MAX_OTEL_LOG_BODY_BYTES), BTreeMap::new());
+        {
+            let OtelSignal::Log(aggregate_log) = &mut aggregate else {
+                unreachable!();
+            };
+            for index in 0..11 {
+                aggregate_log.attributes.insert(
+                    format!("k{index:02}"),
+                    "v".repeat(MAX_OTEL_ATTRIBUTE_VALUE_BYTES),
+                );
+            }
+        }
+        let last_key = "k11";
+        let current = validated_signal_encoded_size(&aggregate).unwrap();
+        let last_value_bytes = MAX_OTEL_SIGNAL_ENCODED_BYTES
+            - current
+            - (ENCODED_STRING_OVERHEAD_BYTES * 2)
+            - last_key.len();
+        assert!(last_value_bytes <= MAX_OTEL_ATTRIBUTE_VALUE_BYTES);
+        {
+            let OtelSignal::Log(aggregate_log) = &mut aggregate else {
+                unreachable!();
+            };
+            aggregate_log
+                .attributes
+                .insert(last_key.to_owned(), "v".repeat(last_value_bytes));
+        }
+        assert_eq!(
+            validated_signal_encoded_size(&aggregate),
+            Ok(MAX_OTEL_SIGNAL_ENCODED_BYTES)
+        );
+        {
+            let OtelSignal::Log(aggregate_log) = &mut aggregate else {
+                unreachable!();
+            };
+            aggregate_log
+                .attributes
+                .get_mut(last_key)
+                .unwrap()
+                .push('v');
+        }
+        assert_eq!(
+            super::validate_signal(&aggregate),
+            Err(TelemetryError::InvalidSignal)
+        );
+    }
+
+    #[test]
+    fn invalid_signal_is_rejected_before_it_enters_the_queue() {
+        let handle = TelemetryHandle::new();
+        let generation = GenerationTelemetry::new(1);
+        handle.activate(&generation);
+        assert_eq!(
+            handle.try_emit(log(
+                &"b".repeat(MAX_OTEL_LOG_BODY_BYTES + 1),
+                BTreeMap::new(),
+            )),
+            Err(TelemetryError::InvalidSignal)
+        );
+        assert_eq!(handle.pending_count(), 0);
+    }
+
+    fn log(body: &str, attributes: BTreeMap<String, String>) -> OtelSignal {
+        OtelSignal::Log(OtelLog {
+            timestamp: Duration::ZERO,
+            severity: OtelSeverity::Info,
+            body: body.to_owned(),
+            attributes,
+        })
+    }
+
+    fn trace_context() -> TraceContext {
+        TraceContext::from_traceparent(
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            None,
+        )
+        .unwrap()
     }
 }

@@ -12,7 +12,7 @@ use crate::{
     OtelSignal,
     export::{
         GenerationTelemetry, OtelExportStats, OtelExporter, TelemetryAdmission, TelemetryError,
-        TelemetryHandle, export_application_signals, export_diagnostics, validate_signal,
+        TelemetryHandle, export_application_signals, export_diagnostics,
     },
 };
 
@@ -356,10 +356,10 @@ impl NativeRequestEndpoint for OtelTelemetryEndpoint {
         };
         let telemetry = self.telemetry.clone();
         Box::pin(async move {
-            match validate_signal(&signal) {
-                Ok(()) => Ok(Ok(Box::new(TelemetryResponse {
-                    admission: telemetry.try_emit(*signal).expect("validated signal"),
-                }) as Box<dyn std::any::Any>)),
+            match telemetry.try_emit(*signal) {
+                Ok(admission) => Ok(Ok(
+                    Box::new(TelemetryResponse { admission }) as Box<dyn std::any::Any>
+                )),
                 Err(error) => Ok(Err(Box::new(error) as Box<dyn std::any::Any>)),
             }
         })

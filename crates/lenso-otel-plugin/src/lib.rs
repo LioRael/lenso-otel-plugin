@@ -6,8 +6,10 @@ mod signal;
 mod trace;
 
 pub use export::{
-    ExportError, NoopExporter, OtelExportStats, OtelExporter, TelemetryAdmission, TelemetryError,
-    TelemetryHandle,
+    ExportError, MAX_OTEL_ATTRIBUTE_KEY_BYTES, MAX_OTEL_ATTRIBUTE_VALUE_BYTES, MAX_OTEL_ATTRIBUTES,
+    MAX_OTEL_LOG_BODY_BYTES, MAX_OTEL_METRIC_UNIT_BYTES, MAX_OTEL_SIGNAL_ENCODED_BYTES,
+    MAX_OTEL_SIGNAL_NAME_BYTES, NoopExporter, OtelExportStats, OtelExporter, TelemetryAdmission,
+    TelemetryError, TelemetryHandle,
 };
 pub use plugin::{
     DEFAULT_DIAGNOSTIC_QUEUE_CAPACITY, DEFAULT_TELEMETRY_QUEUE_CAPACITY, OTEL_PLUGIN_PACKAGE_ID,
