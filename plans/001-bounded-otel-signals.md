@@ -36,8 +36,8 @@ and tests. Out of scope: sampling policy and backend-specific cardinality aggreg
 
 ## Verification
 
-- `lenso-cargo test -p lenso-otel-plugin` -> all pass.
-- `lenso-cargo check -p lenso-otel-plugin --all-targets` -> exit 0.
+- `cargo test -p lenso-otel-plugin` -> all pass.
+- `cargo check -p lenso-otel-plugin --all-targets` -> exit 0.
 - `git diff --check` -> no output.
 
 ## STOP conditions
