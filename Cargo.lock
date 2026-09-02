@@ -164,12 +164,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
-name = "hex"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
 name = "hmac"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -205,17 +199,20 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "lenso-app-plan"
-version = "0.3.0"
-source = "git+https://github.com/LioRael/lenso?rev=b8c7d3bfd7b900965f7782016b92f6c891fa98e5#b8c7d3bfd7b900965f7782016b92f6c891fa98e5"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "235c515fae1c80eb41c615b026a3ab7d75f83475c937257c9fe77ea26179d48a"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
 name = "lenso-kernel"
-version = "0.2.0"
-source = "git+https://github.com/LioRael/lenso?rev=b8c7d3bfd7b900965f7782016b92f6c891fa98e5#b8c7d3bfd7b900965f7782016b92f6c891fa98e5"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a24275fb082b9a0604b9a5e439171482c4daf19a47111d80f3521fe616732add"
 dependencies = [
  "futures",
  "lenso-app-plan",
@@ -224,21 +221,22 @@ dependencies = [
 [[package]]
 name = "lenso-native-adapter"
 version = "0.3.0"
-source = "git+https://github.com/LioRael/lenso-runtime-rust?rev=6bd5b88f3c6610581fcc4306c6cf356f71f7c611#6bd5b88f3c6610581fcc4306c6cf356f71f7c611"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "858bf824819d7279224086b2d97888df6a77125158d1f6b9f289e3361c02316a"
 dependencies = [
  "futures",
  "inventory",
  "lenso-app-plan",
  "lenso-kernel",
  "lenso-native-adapter-macros",
- "lenso-runtime-codec",
  "serde_json",
 ]
 
 [[package]]
 name = "lenso-native-adapter-macros"
 version = "0.2.0"
-source = "git+https://github.com/LioRael/lenso-runtime-rust?rev=6bd5b88f3c6610581fcc4306c6cf356f71f7c611#6bd5b88f3c6610581fcc4306c6cf356f71f7c611"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10baa8ac12c7106b75484c58d3f05b3f1b3d88de43981a453b04d81682fb072c"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -258,20 +256,6 @@ dependencies = [
  "lenso-app-plan",
  "lenso-kernel",
  "lenso-native-adapter",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "lenso-runtime-codec"
-version = "0.2.0"
-source = "git+https://github.com/LioRael/lenso-runtime-rust?rev=6bd5b88f3c6610581fcc4306c6cf356f71f7c611#6bd5b88f3c6610581fcc4306c6cf356f71f7c611"
-dependencies = [
- "futures",
- "hex",
- "lenso-app-plan",
- "lenso-kernel",
  "serde",
  "serde_json",
  "sha2",
